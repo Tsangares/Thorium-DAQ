@@ -283,7 +283,7 @@ class DaqRunner(object):
             allTimes.append(changeInTime)
             #print("Lecroy DeltaTime: %.04f\n"%changeInTime)
             
-            self.list_times.append("EVENT:%s,"%(str(event)) + str(time.time()))
+            self.list_times.append("EVENT:%s,"%(str(event)) + str(lecroyTime)
 
         allTimes=allTimes[1:]
         std=stats.stdev(allTimes)
