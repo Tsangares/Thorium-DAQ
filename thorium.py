@@ -3,6 +3,8 @@ __author__ = "Ric Rodriguez"
 __email__ = "therickyross2@gmail.com"
 __project__ = "Thorium DAQ"
 
+import statistics as stats
+from dateutil.parser import parse
 import argparse
 import configparser
 import gc
@@ -19,6 +21,15 @@ from lecroy import Oscilloscope
 
 queue_stop = Queue()
 
+
+# This function parses lecroy output to get the time.
+# It also converts it to unix time
+def parseScopeTime(string,verbose=False):
+    arr=string.split('=')
+    date=arr[1].replace(", Time",'')
+    time=arr[2][:-2].replace(': ',':')
+    if(verbose): print("Lecroy time: %s"%time)
+    return float(parse(time).strftime("%s.%f"))
 
 def signal_handler(signal, frame):
     queue_stop.put("STOP")
@@ -203,33 +214,54 @@ class DaqRunner(object):
         end_time = 0
         wfm_counter = 0
         sublist_currents = []
+        lastTime=0
+        allTimes=[]
         if self.use_caen:
             sublist_currents.append(self.caen.read_current())
 
         for event in range(int(self.num_events)):
 
             if event % 100 == 0:
-                print("On event {}".format(event))
+                print("On event %s"%(event))
             if event == int(self.num_events) // 2 and self.use_caen:
                 sublist_currents.append(self.caen.read_current())
 
             if not self.stop_queue.empty():
                 print("STOPPING DAQ")
                 return
-            # event_wfm = self.scope.get_waveforms()
+            # even1t_wfm = self.scope.get_waveforms()
             command_payload = ""
             for channel_number, active_channel in enumerate(self.channels):
                 if active_channel:
-                    command_payload += "C{}:INSPECT? SIMPLE;".format(str(channel_number + 1))
+                    command_payload += "C%s:INSPECT? SIMPLE;"%(str(channel_number + 1))
+            #Adds time or last triggerto output
+            command_payload+="C4:INSPECT? TRIGGER_TIME;"
 
+            #payload=self.scope.inst.query("ARM; WAIT;" + command_payload)
+            while "1" not in self.scope.inst.query("TRMD SINGLE; WAIT;*OPC?"):
+                continue
+            payload=self.scope.inst.query(command_payload)
+            #PARSE OUTPUT
+            splitPayload=payload.split('C4:INSP "TRIGGER_TIME')
+            oldPayload=splitPayload[0]
+            lecroyTime=parseScopeTime(splitPayload[1])
             self.list_events.append(
                 self.convert_to_vector(
-                    self.scope.inst.query("ARM; WAIT;" + command_payload)
+                    oldPayload
                 )
             )
 
-            self.list_times.append("EVENT:{},".format(event) + str(time.time()))
+            changeInTime=lecroyTime-lastTime
+            lastTime=lecroyTime
+            allTimes.append(changeInTime)
+            #print("Lecroy DeltaTime: %.04f\n"%changeInTime)
+            
+            self.list_times.append("EVENT:%s,"%(str(event)) + str(lecroyTime)
 
+        allTimes=allTimes[1:]
+        std=stats.stdev(allTimes)
+        mean=stats.mean(allTimes)
+        print("Time std:%.06f with a mean %.04f; aquiring at %.02f Hz"%(std,mean,1/mean))
         if self.use_caen:
             sublist_currents.append(self.caen.read_current())
             self.list_currents.append(sublist_currents)
